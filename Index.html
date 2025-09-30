@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Ballon – vitesse en km/h</title>
+<style>
+  :root {
+    --bg: #0b1e34; --panel: #0f2a4d; --accent: #5ec8ff;
+    --accent2: #ffd166; --good: #7af59a;
+  }
+  html,body{height:100%;margin:0;background:#0a1830;color:#e8f2ff;font-family:sans-serif;}
+  .wrap{display:grid;grid-template-rows:auto 1fr auto;gap:10px;height:100%;}
+  header,footer{padding:10px;background:rgba(255,255,255,.04);}
+  #ui{display:flex;flex-wrap:wrap;gap:12px 18px;align-items:center;padding:8px;background:var(--panel);}
+  .control{display:grid;grid-template-columns:auto 160px auto;gap:8px;align-items:center;}
+  .control label{font-size:14px;}
+  .control output{min-width:60px;text-align:right;color:var(--accent2);}
+  input[type=range]{width:160px;accent-color:var(--accent);}
+  button{background:#1a4772;color:#fff;border:none;padding:8px 14px;border-radius:8px;cursor:pointer;}
+  #hud{margin-left:auto;display:flex;gap:16px;align-items:center;}
+  #hud span b{color:var(--good);}
+  #stage{width:100%;height:100%;background:#061629;border:2px solid #0b2742;border-radius:16px;display:block;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><h1>Ballon & Éclairs ⚡ – Vitesse en km/h</h1></header>
+
+  <div id="ui">
+    <div class="control">
+      <label>Poids (kg)</label>
+      <input id="mass" type="range" min="0.2" max="10" step="0.1" value="2">
+      <output id="massOut">2.0</output>
+    </div>
+    <div class="control">
+      <label>Restitution</label>
+      <input id="bounce" type="range" min="0.3" max="0.98" step="0.02" value="0.85">
+      <output id="bounceOut">0.85</output>
+    </div>
+    <div class="control">
+      <label>Frottement</label>
+      <input id="drag" type="range" min="0" max="0.02" step="0.001" value="0.004">
+      <output id="dragOut">0.004</output>
+    </div>
+    <button id="reset">Réinitialiser</button>
+    <div id="hud">
+      <span>Vitesse: <b id="vNow">0.00</b> km/h</span>
+      <span>Max: <b id="vMax">0.00</b> km/h</span>
+    </div>
+  </div>
+
+  <canvas id="stage"></canvas>
+
+  <footer>v0 = Force / masse • la traînée de points suit la balle</footer>
+</div>
+
+<script>
+const c=document.getElementById('stage'),ctx=c.getContext('2d');
+function fit(){c.width=innerWidth;c.height=innerHeight-120;}
+fit();addEventListener('resize',fit);
+
+// conversions
+const pxToKmH = 0.036; // 1 px/s ≈ 0.036 km/h si 1 px ≈ 1 cm
+
+// éléments UI
+const massR=document.getElementById('mass'), bounceR=document.getElementById('bounce'), dragR=document.getElementById('drag');
+const massOut=document.getElementById('massOut'), bounceOut=document.getElementById('bounceOut'), dragOut=document.getElementById('dragOut');
+const vNow=document.getElementById('vNow'), vMax=document.getElementById('vMax');
+const reset=document.getElementById('reset');
+
+// état
+let mass=+massR.value, bounce=+bounceR.value, drag=+dragR.value;
+const ball={x:c.width/2,y:c.height/2,vx:0,vy:0,r:16};
+const trail=[], bolts=[];
+let aiming=false,start={x:0,y:0},end={x:0,y:0},lastTrail=0,speedMax=0,last=performance.now();
+
+function upd(){massOut.textContent=massR.value;bounceOut.textContent=bounceR.value;dragOut.textContent=dragR.value;}
+massR.oninput=()=>{mass=+massR.value;upd();};
+bounceR.oninput=()=>{bounce=+bounceR.value;upd();};
+dragR.oninput=()=>{drag=+dragR.value;upd();};
+upd();
+
+reset.onclick=()=>{
+  ball.x=c.width/2;ball.y=c.height/2;ball.vx=0;ball.vy=0;
+  trail.length=0;bolts.length=0;speedMax=0;
+  vMax.textContent='0.00';vNow.textContent='0.00';
+};
+
+// contrôle souris/tactile
+function pos(e){const r=c.getBoundingClientRect();return e.touches?{x:e.touches[0].clientX-r.left,y:e.touches[0].clientY-r.top}:{x:e.clientX-r.left,y:e.clientY-r.top};}
+c.addEventListener('mousedown',e=>{aiming=true;start=end=pos(e);});
+c.addEventListener('mousemove',e=>{if(aiming)end=pos(e);});
+addEventListener('mouseup',e=>{
+  if(!aiming)return;aiming=false;
+  const dx=start.x-end.x,dy=start.y-end.y,F=Math.hypot(dx,dy);
+  if(F>2){const a=Math.atan2(dy,dx),v0=F/Math.max(0.1,mass);ball.vx=Math.cos(a)*v0*6;ball.vy=Math.sin(a)*v0*6;}
+});
+c.addEventListener('touchstart',e=>{aiming=true;start=end=pos(e);},{passive:false});
+c.addEventListener('touchmove',e=>{if(aiming)end=pos(e);},{passive:false});
+c.addEventListener('touchend',()=>{if(!aiming)return;aiming=false;const dx=start.x-end.x,dy=start.y-end.y,F=Math.hypot(dx,dy);
+  if(F>2){const a=Math.atan2(dy,dx),v0=F/Math.max(0.1,mass);ball.vx=Math.cos(a)*v0*6;ball.vy=Math.sin(a)*v0*6;}});
+
+// éclair
+function bolt(x,y,nx,ny){
+  const len=80+Math.random()*60,pts=[],steps=12,ortho={x:-ny,y:nx};
+  for(let i=0;i<=steps;i++){const t=i/steps,px=x-nx*t*len,py=y-ny*t*len,j=(Math.random()-.5)*(1-t)*30;
+    pts.push({x:px+ortho.x*j*0.1,y:py+ortho.y*j*0.1});}
+  bolts.push({pts,life:1});
+}
+
+function loop(now){
+  const dt=Math.min(0.033,(now-last)/1000);last=now;
+  ball.vx*=(1-drag);ball.vy*=(1-drag);
+  ball.x+=ball.vx*dt*60;ball.y+=ball.vy*dt*60;
+  let hit=false,nx=0,ny=0;
+  if(ball.x<ball.r){ball.x=ball.r;ball.vx=-ball.vx*bounce;hit=true;nx=1;}
+  if(ball.x>c.width-ball.r){ball.x=c.width-ball.r;ball.vx=-ball.vx*bounce;hit=true;nx=-1;}
+  if(ball.y<ball.r){ball.y=ball.r;ball.vy=-ball.vy*bounce;hit=true;ny=1;}
+  if(ball.y>c.height-ball.r){ball.y=c.height-ball.r;ball.vy=-ball.vy*bounce;hit=true;ny=-1;}
+  if(hit)bolt(ball.x,ball.y,nx,ny);
+
+  if(now-lastTrail>50){trail.push({x:ball.x,y:ball.y,life:1});if(trail.length>600)trail.shift();lastTrail=now;}
+
+  ctx.clearRect(0,0,c.width,c.height);
+
+  for(let i=trail.length-1;i>=0;i--){const p=trail[i];p.life-=dt*0.5;if(p.life<=0){trail.splice(i,1);continue;}
+    ctx.beginPath();ctx.arc(p.x,p.y,2,0,2*Math.PI);ctx.fillStyle=`rgba(255,255,0,${p.life})`;ctx.fill();}
+
+  for(let i=bolts.length-1;i>=0;i--){const b=bolts[i];b.life-=dt*2;if(b.life<=0){bolts.splice(i,1);continue;}
+    ctx.save();ctx.globalCompositeOperation='lighter';ctx.globalAlpha=b.life;ctx.beginPath();
+    ctx.moveTo(b.pts[0].x,b.pts[0].y);for(const p of b.pts)ctx.lineTo(p.x,p.y);ctx.strokeStyle='cyan';ctx.lineWidth=2;ctx.stroke();ctx.restore();}
+
+  ctx.beginPath();ctx.arc(ball.x,ball.y,ball.r,0,2*Math.PI);ctx.fillStyle='orange';ctx.fill();ctx.strokeStyle='#333';ctx.lineWidth=2;ctx.stroke();
+
+  if(aiming){ctx.beginPath();ctx.moveTo(start.x,start.y);ctx.lineTo(end.x,end.y);ctx.strokeStyle='white';ctx.stroke();}
+
+  const speedPxS=Math.hypot(ball.vx,ball.vy)*60;
+  const speedKmH=speedPxS*pxToKmH;
+  vNow.textContent=speedKmH.toFixed(2);
+  if(speedKmH>speedMax){speedMax=speedKmH;vMax.textContent=speedMax.toFixed(2);}
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
